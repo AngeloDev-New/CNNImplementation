@@ -4,7 +4,10 @@ from torchvision.io import read_image
 import os
 import random
 import copy
-
+class DatasetZera(Dataset):
+    def __init__(self,json_path,classes = 2,transform = None,target_transform=None):
+        pass
+    
 class DatasetUnion(Dataset):
     def __init__(self, path_dataset, classes, transform=None, target_transform=None,exepts = None):
         self.transform = transform

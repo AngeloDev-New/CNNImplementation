@@ -27,7 +27,7 @@ class Trainer:
         weight_decay=1e-4,
     ):
         os.makedirs(models_path, exist_ok=True)
-
+        self.treino_concluido = False
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = model.to(self.device)
 
@@ -54,6 +54,7 @@ class Trainer:
         self.last_epoch = 0
         self.best_val_loss = float("inf")
 
+
         self._load_state()
 
 
@@ -68,13 +69,14 @@ class Trainer:
             self.history = state["history"]
             self.last_epoch = state["last_epoch"]
             self.best_val_loss = state["best_val_loss"]
-
+            self.treino_concluido = state["treino_concluido"]
             print(f"✔ Estado carregado! Retomando a partir da epoch {self.last_epoch + 1}")
             print(f"   Histórico: {len(self.history['train_loss'])} epochs anteriores")
 
         if os.path.exists(last_path):
             self.model.load_state_dict(torch.load(last_path, map_location=self.device))
-            print("last.pth carregado")
+            print("✔ last.pth carregado")
+
 
 
     def _save_state(self, epoch):
@@ -85,40 +87,17 @@ class Trainer:
             "best_val_loss": self.best_val_loss,
             "history": self.history
         }
-
+        data['treino_concluido'] = self.treino_concluido
         with open(os.path.join(self.models_path, "training_state.json"), "w") as f:
             json.dump(data, f, indent=4)
 
 
-    def _check_early_stopping_already_triggered(self, patience):
-        """Verifica se early stopping já foi atingido anteriormente"""
-        if len(self.history["val_loss"]) < patience:
-            return False
-        
-        # Pega as últimas 'patience' epochs
-        recent_losses = self.history["val_loss"][-patience:]
-        
-        # Encontra o índice da menor loss em TODO o histórico
-        min_loss_idx = self.history["val_loss"].index(min(self.history["val_loss"]))
-        
-        # Se a melhor loss foi há 'patience' epochs atrás ou mais, early stopping já aconteceu
-        epochs_since_best = len(self.history["val_loss"]) - 1 - min_loss_idx
-        
-        return epochs_since_best >= patience
-
 
     def train(self, num_epochs, patience=10):
-        # Verifica se early stopping já foi atingido
-        if self._check_early_stopping_already_triggered(patience):
-            print(f"\nEarly stopping já foi atingido anteriormente!")
-            print(f"   Melhor val_loss: {self.best_val_loss:.4f}")
-            print(f"   Última melhoria foi há {len(self.history['val_loss']) - self.history['val_loss'].index(min(self.history['val_loss'])) - 1} epochs")
-            print(f"\n   Use trainer.plot() para ver o histórico")
-            print(f"   Use trainer.evaluate() para avaliar no test set")
-            return
-        
         no_improve = 0
-
+        if self.treino_concluido:
+            print('O treino ja voi concluido')
+            return
         for epoch in range(self.last_epoch, num_epochs):
             print("\n-----------------------------------")
             print(f"Epoch {epoch+1}/{num_epochs}")
@@ -190,14 +169,10 @@ class Trainer:
 
             if no_improve >= patience:
                 print(f"\nEarly stopping ativado! ({patience} epochs sem melhoria)")
-                self._save_state(epoch)
                 break
 
-        else:
-            # Se completou todas as epochs sem break
-            self._save_state(epoch)
-
-        print("\n✔ Treinamento finalizado!")
+        print("\nTreinamento finalizado!")
+        self.treino_concluido = True
 
     def evaluate(self, use_best=True):
 
@@ -212,15 +187,9 @@ class Trainer:
         self.model.eval()
         preds_all = []
         labels_all = []
-        
-        total_batches = len(self.test_loader)
-        print(f"Processando {total_batches} batches...")
 
         with torch.no_grad():
-            for i, (inputs, labels) in enumerate(self.test_loader):
-                if i % 10 == 0:
-                    print(f"  Batch {i+1}/{total_batches}")
-                
+            for inputs, labels in self.test_loader:
                 inputs = inputs.to(self.device)
 
                 outputs = self.model(inputs)
@@ -230,7 +199,7 @@ class Trainer:
                 labels_all.extend(labels.numpy())
 
         acc = np.mean(np.array(preds_all) == np.array(labels_all))
-        print(f"\n✔ Test accuracy: {acc:.4f}")
+        print(f"\n Test accuracy: {acc:.4f}")
 
         cm = confusion_matrix(labels_all, preds_all)
         disp = ConfusionMatrixDisplay(cm, display_labels=list(self.classes))
@@ -244,13 +213,14 @@ class Trainer:
     def plot(self):
 
         if len(self.history["train_loss"]) == 0:
-            print("Nenhum histórico para plotar")
+            print(" Nenhum histórico para plotar")
             return
 
         history = self.history
         epochs = range(1, len(history["train_loss"]) + 1)
 
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
 
         ax1.plot(epochs, history["train_loss"], 'b-', label="Train Loss", linewidth=2)
         ax1.plot(epochs, history["val_loss"], 'r-', label="Val Loss", linewidth=2)
@@ -259,6 +229,7 @@ class Trainer:
         ax1.set_title('Training and Validation Loss')
         ax1.legend()
         ax1.grid(True, alpha=0.3)
+
 
         ax2.plot(epochs, history["train_acc"], 'b-', label="Train Acc", linewidth=2)
         ax2.plot(epochs, history["val_acc"], 'r-', label="Val Acc", linewidth=2)
