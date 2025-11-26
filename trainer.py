@@ -21,11 +21,13 @@ class Trainer:
         test_set,
         classes,
         models_path,
+        task="classification",
         batch_size=32,
         lr=3e-4,
         momentum=0.9,
         weight_decay=1e-4,
     ):
+        self.task = task  # classification ou segmentation
         os.makedirs(models_path, exist_ok=True)
         self.treino_concluido = False
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -54,7 +56,6 @@ class Trainer:
         self.last_epoch = 0
         self.best_val_loss = float("inf")
 
-
         self._load_state()
 
 
@@ -73,13 +74,12 @@ class Trainer:
             if self.treino_concluido:
                 print("Treinamento Finalizado")
             else:
-                print(f" Estado carregado! Retomando a partir da epoch {self.last_epoch + 1}")
-            print(f"   Histórico: {len(self.history['train_loss'])} epochs anteriores")
+                print(f"Estado carregado! Retomando a partir da epoch {self.last_epoch + 1}")
+            print(f"Histórico: {len(self.history['train_loss'])} epochs anteriores")
 
         if os.path.exists(last_path):
             self.model.load_state_dict(torch.load(last_path, map_location=self.device))
             print("✔ last.pth carregado")
-
 
 
     def _save_state(self, epoch):
@@ -88,48 +88,69 @@ class Trainer:
         data = {
             "last_epoch": epoch + 1,  
             "best_val_loss": self.best_val_loss,
-            "history": self.history
+            "history": self.history,
+            "treino_concluido": self.treino_concluido
         }
-        data['treino_concluido'] = self.treino_concluido
         with open(os.path.join(self.models_path, "training_state.json"), "w") as f:
             json.dump(data, f, indent=4)
 
+
+    def _step(self, inputs, labels):
+        """Método genérico para treino/validação que respeita o task"""
+        inputs = inputs.to(self.device)
+        labels = labels.to(self.device)
+
+        outputs = self.model(inputs)
+
+        if self.task == "classification":
+            # outputs: (B, C)
+            # labels:  (B)
+            loss = self.criterion(outputs, labels)
+            preds = outputs.argmax(1)
+            total = labels.size(0)
+
+        elif self.task == "segmentation":
+            # outputs: (B, C, H, W)
+            # labels:  (B, H, W)
+            loss = self.criterion(outputs, labels.long())
+            preds = outputs.argmax(1)
+            total = labels.numel()  # conta todos os pixels
+
+        return loss, preds, labels, total
 
 
     def train(self, num_epochs, patience=10):
         no_improve = 0
         if self.treino_concluido:
-            # print('O treino ja voi concluido')
             return
+            
         for epoch in range(self.last_epoch, num_epochs):
             print("\n-----------------------------------")
             print(f"Epoch {epoch+1}/{num_epochs}")
             print("Início:", datetime.now().strftime("%H:%M:%S"))
 
+            # Treino
             self.model.train()
             running_loss = 0
             correct = 0
             total = 0
 
             for inputs, labels in self.train_loader:
-                inputs = inputs.to(self.device)
-                labels = labels.to(self.device)
-
                 self.optimizer.zero_grad()
-                outputs = self.model(inputs)
-                loss = self.criterion(outputs, labels)
-
+                
+                loss, preds, labels, total_pixels = self._step(inputs, labels)
+                
                 loss.backward()
                 self.optimizer.step()
 
-                running_loss += loss.item() * inputs.size(0)
-                preds = outputs.argmax(1)
+                running_loss += loss.item() * total_pixels
                 correct += (preds == labels).sum().item()
-                total += labels.size(0)
+                total += total_pixels
 
             train_loss = running_loss / total
             train_acc = correct / total
 
+            # Validação
             self.model.eval()
             val_loss_sum = 0
             val_correct = 0
@@ -137,16 +158,11 @@ class Trainer:
 
             with torch.no_grad():
                 for inputs, labels in self.val_loader:
-                    inputs = inputs.to(self.device)
-                    labels = labels.to(self.device)
-
-                    outputs = self.model(inputs)
-                    loss = self.criterion(outputs, labels)
-
-                    val_loss_sum += loss.item() * inputs.size(0)
-                    preds = outputs.argmax(1)
+                    loss, preds, labels, total_pixels = self._step(inputs, labels)
+                    
+                    val_loss_sum += loss.item() * total_pixels
                     val_correct += (preds == labels).sum().item()
-                    val_total += labels.size(0)
+                    val_total += total_pixels
 
             val_loss = val_loss_sum / val_total
             val_acc = val_correct / val_total
@@ -177,8 +193,8 @@ class Trainer:
         print("\nTreinamento finalizado!")
         self.treino_concluido = True
 
-    def evaluate(self, use_best=True):
 
+    def evaluate(self, use_best=True):
         if use_best:
             best_path = os.path.join(self.models_path, "best.pth")
             if os.path.exists(best_path):
@@ -194,36 +210,48 @@ class Trainer:
         with torch.no_grad():
             for inputs, labels in self.test_loader:
                 inputs = inputs.to(self.device)
+                labels = labels.to(self.device)
 
                 outputs = self.model(inputs)
-                preds = outputs.argmax(1)
+                
+                if self.task == "classification":
+                    preds = outputs.argmax(1)
+                    preds_all.append(preds.cpu().numpy())
+                    labels_all.append(labels.cpu().numpy())
+                    
+                elif self.task == "segmentation":
+                    preds = outputs.argmax(1)
+                    preds_all.append(preds.cpu().numpy())
+                    labels_all.append(labels.cpu().numpy())
 
-                preds_all.extend(preds.cpu().numpy())
-                labels_all.extend(labels.numpy())
+        # Concatena de forma eficiente
+        preds_all = np.concatenate([p.flatten() for p in preds_all])
+        labels_all = np.concatenate([l.flatten() for l in labels_all])
+        
+        acc = np.mean(preds_all == labels_all)
+        print(f"\nTest accuracy: {acc:.4f}")
 
-        acc = np.mean(np.array(preds_all) == np.array(labels_all))
-        print(f"\n Test accuracy: {acc:.4f}")
-
+        # Matriz de confusão
         cm = confusion_matrix(labels_all, preds_all)
         disp = ConfusionMatrixDisplay(cm, display_labels=list(self.classes))
         fig, ax = plt.subplots(figsize=(8, 6))
         disp.plot(ax=ax, cmap='Blues')
-        plt.title('Confusion Matrix')
+        
+        title = 'Confusion Matrix - Classification' if self.task == "classification" else 'Confusion Matrix - Segmentation (per pixel)'
+        plt.title(title)
         plt.tight_layout()
         plt.show()
 
 
     def plot(self):
-
         if len(self.history["train_loss"]) == 0:
-            print(" Nenhum histórico para plotar")
+            print("Nenhum histórico para plotar")
             return
 
         history = self.history
         epochs = range(1, len(history["train_loss"]) + 1)
 
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
-
 
         ax1.plot(epochs, history["train_loss"], 'b-', label="Train Loss", linewidth=2)
         ax1.plot(epochs, history["val_loss"], 'r-', label="Val Loss", linewidth=2)
@@ -232,7 +260,6 @@ class Trainer:
         ax1.set_title('Training and Validation Loss')
         ax1.legend()
         ax1.grid(True, alpha=0.3)
-
 
         ax2.plot(epochs, history["train_acc"], 'b-', label="Train Acc", linewidth=2)
         ax2.plot(epochs, history["val_acc"], 'r-', label="Val Acc", linewidth=2)
