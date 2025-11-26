@@ -7,7 +7,7 @@ import copy
 class DatasetZera(Dataset):
     def __init__(self,json_path,classes = 2,transform = None,target_transform=None):
         pass
-    
+
 class DatasetUnion(Dataset):
     def __init__(self, path_dataset, classes, transform=None, target_transform=None,exepts = None):
         self.transform = transform
@@ -74,7 +74,10 @@ class DatasetUnion(Dataset):
               return image, label
         setTrain = sapleData(self.samples[:train],transform = copy.deepcopy(self.transform),target_transform=copy.deepcopy(self.target_transform))
         setVal = sapleData(self.samples[train:train+val],transform = copy.deepcopy(self.transform),target_transform=copy.deepcopy(self.target_transform))
-        setTest = sapleData(self.samples[train+val:],transform = copy.deepcopy(self.transform),target_transform=copy.deepcopy(self.target_transform))
+        if test:
+            setTest = sapleData(self.samples[train+val:train+val+test],transform = copy.deepcopy(self.transform),target_transform=copy.deepcopy(self.target_transform))
+        else:
+            setTest = sapleData(self.samples[train+val:],transform = copy.deepcopy(self.transform),target_transform=copy.deepcopy(self.target_transform))
         return setTrain,setVal,setTest
 
 
