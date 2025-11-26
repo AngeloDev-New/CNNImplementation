@@ -70,7 +70,10 @@ class Trainer:
             self.last_epoch = state["last_epoch"]
             self.best_val_loss = state["best_val_loss"]
             self.treino_concluido = state["treino_concluido"]
-            print(f"✔ Estado carregado! Retomando a partir da epoch {self.last_epoch + 1}")
+            if self.treino_concluido:
+                print("Treinamento Finalizado")
+            else:
+                print(f" Estado carregado! Retomando a partir da epoch {self.last_epoch + 1}")
             print(f"   Histórico: {len(self.history['train_loss'])} epochs anteriores")
 
         if os.path.exists(last_path):
@@ -96,7 +99,7 @@ class Trainer:
     def train(self, num_epochs, patience=10):
         no_improve = 0
         if self.treino_concluido:
-            print('O treino ja voi concluido')
+            # print('O treino ja voi concluido')
             return
         for epoch in range(self.last_epoch, num_epochs):
             print("\n-----------------------------------")
