@@ -1,6 +1,20 @@
 import torchvision.models as models
 import torch.nn as nn
 import inspect
+from transformers import AutoModelForSemanticSegmentation
+
+def segmentationModels(model_name, NUM_CLASSES=2):
+    if model_name == "DeepLabV3Plus":
+        model = AutoModelForSemanticSegmentation.from_pretrained(
+            "mathilda35/deeplabv3plus-resnet50"
+        )
+        model.decode_head.classifier = nn.Conv2d(
+            256, NUM_CLASSES, kernel_size=1
+        )
+
+        return model
+
+    raise ValueError(f"Modelo '{model_name}' não encontrado!")
 
 
 def load_model(name, num_classes=2, pretrained=True):
